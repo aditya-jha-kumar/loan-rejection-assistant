@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Data — don't push large datasets to GitHub
+data/
+models/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Environment
+venv/
+.venv/
+
+# API keys
+.env
+secrets.py
