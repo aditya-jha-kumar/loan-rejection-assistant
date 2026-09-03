@@ -4,9 +4,11 @@ __pycache__/
 *.pyo
 .env
 
-# Data — don't push large datasets to GitHub
-data/
+# Data — ship the public CSV + trained model so Vercel can boot
+data/*
+!data/loan_dataset.csv
 models/*.pkl
+!models/loan_model.pkl
 
 # Experiment outputs can be regenerated
 results/

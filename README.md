@@ -72,7 +72,7 @@ Vercel looks for FastAPI in `app.py` by default; this repo’s UI is Streamlit. 
 entrypoint = "api:app"
 ```
 
-Add `GEMINI_API_KEY` in the Vercel project environment if you want Gemini letters. The dataset (`data/loan_dataset.csv`) and model (`models/loan_model.pkl`) are gitignored — the function needs them at runtime or startup will fail.
+Add `GEMINI_API_KEY` in the Vercel project environment if you want Gemini letters. The API lazy-loads the model on `/predict`; `/` and `/health` stay up even before that.
 
 ## Project layout
 

@@ -37,6 +37,7 @@ from fairness import run_full_audit
 from llm import generate_explanation
 from logging_utils import get_logger
 from model import DEFAULT_MODEL_PATH, load_model
+from runtime_assets import ensure_assets
 
 logger = get_logger("pipeline")
 
@@ -61,6 +62,7 @@ def load_artifacts(data_path=DEFAULT_DATA_PATH, model_path=DEFAULT_MODEL_PATH):
     """Load model, explainers, and run fairness audit once at startup."""
     logger.info("Loading artifacts...")
     cfg = load_config()
+    data_path, model_path = ensure_assets()
 
     X_train, X_test, y_train, y_test, X, y = load_data(data_path)
     model = load_model(model_path)

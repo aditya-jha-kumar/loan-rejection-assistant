@@ -4,8 +4,7 @@ api.py
 FastAPI backend for the Explainable Loan Rejection Assistant.
 
 Run from project root:
-    uvicorn app:app --reload
-    uvicorn api:app --reload --app-dir .
+    uvicorn api:app --reload
 or:
     python api.py
 """
@@ -13,7 +12,6 @@ or:
 from __future__ import annotations
 
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -28,6 +26,7 @@ if str(SRC) not in sys.path:
 from pipeline import load_artifacts, run_application  # noqa: E402
 
 _artifacts: dict[str, Any] | None = None
+_load_error: str | None = None
 
 
 class ApplicationRequest(BaseModel):
@@ -52,12 +51,21 @@ class ApplicationRequest(BaseModel):
     llm_mode: Literal["grounded", "free", "off"] = "grounded"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global _artifacts
-    _artifacts = load_artifacts()
-    yield
-    _artifacts = None
+def get_artifacts() -> dict[str, Any]:
+    """Lazy-load so / and /health never crash the Vercel function."""
+    global _artifacts, _load_error
+    if _artifacts is not None:
+        return _artifacts
+    try:
+        _artifacts = load_artifacts()
+        _load_error = None
+        return _artifacts
+    except Exception as e:
+        _load_error = str(e)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Model artifacts unavailable: {e}",
+        ) from e
 
 
 app = FastAPI(
@@ -67,20 +75,33 @@ app = FastAPI(
         "grounded Gemini explanations, and ECOA-oriented fairness audit."
     ),
     version="1.1.0",
-    lifespan=lifespan,
 )
+
+
+@app.get("/")
+def root():
+    return {
+        "name": "Explainable Loan Rejection Assistant",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+        "predict": "POST /predict",
+        "fairness": "/fairness",
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "artifacts_loaded": _artifacts is not None}
+    return {
+        "status": "ok",
+        "artifacts_loaded": _artifacts is not None,
+        "last_error": _load_error,
+    }
 
 
 @app.get("/fairness")
 def fairness():
-    if _artifacts is None:
-        raise HTTPException(503, "Artifacts not loaded")
-    audit = _artifacts.get("fairness_audit", {})
+    audit = get_artifacts().get("fairness_audit", {})
     return {
         "age_disparity": audit.get("age_disparity"),
         "passed": audit.get("passed"),
@@ -93,8 +114,7 @@ def fairness():
 
 @app.post("/predict")
 def predict(req: ApplicationRequest):
-    if _artifacts is None:
-        raise HTTPException(503, "Artifacts not loaded")
+    artifacts = get_artifacts()
 
     payload = req.model_dump()
     llm_mode = payload.pop("llm_mode")
@@ -104,9 +124,8 @@ def predict(req: ApplicationRequest):
             payload["loan_amnt"] / income if income > 0 else 0.0
         )
 
-    result = run_application(payload, _artifacts, llm_mode=llm_mode)
+    result = run_application(payload, artifacts, llm_mode=llm_mode)
 
-    # JSON-serialize DataFrame
     shap_df = result.get("shap_explanation")
     if shap_df is not None:
         result["shap_explanation"] = shap_df.to_dict(orient="records")
