@@ -23,8 +23,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from pipeline import load_artifacts, run_application  # noqa: E402
-
+# Do not import pipeline/SHAP/DiCE here. Vercel crashes if those
+# native libs load during cold start of GET /.
 _artifacts: dict[str, Any] | None = None
 _load_error: str | None = None
 
@@ -57,6 +57,8 @@ def get_artifacts() -> dict[str, Any]:
     if _artifacts is not None:
         return _artifacts
     try:
+        from pipeline import load_artifacts
+
         _artifacts = load_artifacts()
         _load_error = None
         return _artifacts
@@ -123,6 +125,8 @@ def predict(req: ApplicationRequest):
         payload["loan_percent_income"] = (
             payload["loan_amnt"] / income if income > 0 else 0.0
         )
+
+    from pipeline import run_application
 
     result = run_application(payload, artifacts, llm_mode=llm_mode)
 

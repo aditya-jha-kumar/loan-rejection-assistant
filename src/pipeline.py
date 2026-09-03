@@ -14,27 +14,13 @@ Flow:
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 
 from config_loader import load_config
-from counterfactuals import (
-    build_dice_explainer,
-    format_counterfactuals,
-    generate_counterfactuals,
-    get_feature_ranges,
-)
 from data import DEFAULT_DATA_PATH, run_pipeline as load_data
-from evaluation.faithfulness import score_faithfulness
-from evaluation.template_explainer import applicant_local_explanation
-from explainer import (
-    build_explanation_prompt,
-    build_explainer,
-    build_grounded_explanation_prompt,
-    get_shap_values,
-)
-from fairness import run_full_audit
-from llm import generate_explanation
 from logging_utils import get_logger
 from model import DEFAULT_MODEL_PATH, load_model
 from runtime_assets import ensure_assets
@@ -58,14 +44,76 @@ OWNERSHIP_COLS = [
 ]
 
 
+def _serverless() -> bool:
+    return bool(os.getenv("VERCEL"))
+
+
+def _xgb_contributions(model, applicant_df: pd.DataFrame) -> np.ndarray:
+    """Tree contributions via XGBoost (no SHAP package)."""
+    import xgboost as xgb
+
+    dmat = xgb.DMatrix(applicant_df, feature_names=list(applicant_df.columns))
+    raw = model.get_booster().predict(dmat, pred_contribs=True)
+    return np.asarray(raw[0][:-1])
+
+
+def _simple_recourse(row: pd.Series) -> str:
+    tips = []
+    income = float(row.get("person_income", 0))
+    amount = float(row.get("loan_amnt", 0))
+    ratio = float(row.get("loan_percent_income", 0))
+    rate = float(row.get("loan_int_rate", 0))
+    if amount > 0:
+        tips.append(f"Reduce loan request from ${amount:,.0f}")
+    if income > 0:
+        tips.append(f"Increase documented annual income above ${income:,.0f}")
+    if ratio > 0.2:
+        tips.append(
+            f"Lower loan-to-income from {ratio:.1%} toward 20% or below"
+        )
+    if rate > 10:
+        tips.append(f"Seek a lower interest rate than {rate:.2f}%")
+    if not tips:
+        return "Consider a smaller request or stronger income before reapplying."
+    return "\n".join(f"  - {t}" for t in tips)
+
+
 def load_artifacts(data_path=DEFAULT_DATA_PATH, model_path=DEFAULT_MODEL_PATH):
     """Load model, explainers, and run fairness audit once at startup."""
     logger.info("Loading artifacts...")
     cfg = load_config()
     data_path, model_path = ensure_assets()
+    model = load_model(model_path)
+
+    # Vercel: skip SHAP/DiCE/fairness so the function stays in memory limits.
+    if _serverless():
+        feature_cols = list(getattr(model, "feature_names_in_", []))
+        logger.info("Serverless lite artifacts ready (%d features)", len(feature_cols))
+        return {
+            "model": model,
+            "explainer": None,
+            "dice_exp": None,
+            "X_train": None,
+            "X_test": None,
+            "y_test": None,
+            "feature_cols": feature_cols,
+            "fairness_audit": {
+                "note": "Fairness audit is skipped on the serverless deploy.",
+                "gender_note": "Gender data not available in this dataset.",
+                "age_disparity": None,
+                "passed": None,
+                "threshold": 0.10,
+                "groups": [],
+            },
+            "config": cfg,
+            "lite": True,
+        }
+
+    from counterfactuals import build_dice_explainer
+    from explainer import build_explainer
+    from fairness import run_full_audit
 
     X_train, X_test, y_train, y_test, X, y = load_data(data_path)
-    model = load_model(model_path)
     explainer = build_explainer(
         model, X_train, background_size=cfg.get("shap", {}).get("background_size", 100)
     )
@@ -86,6 +134,7 @@ def load_artifacts(data_path=DEFAULT_DATA_PATH, model_path=DEFAULT_MODEL_PATH):
         "feature_cols": X_train.columns.tolist(),
         "fairness_audit": fairness_audit,
         "config": cfg,
+        "lite": False,
     }
 
 
@@ -172,7 +221,12 @@ def run_application(input_dict, artifacts, llm_mode: str | None = None):
         )
         return result
 
-    shap_vals = get_shap_values(explainer, applicant_df)[0]
+    if explainer is None:
+        shap_vals = _xgb_contributions(model, applicant_df)
+    else:
+        from explainer import get_shap_values
+
+        shap_vals = get_shap_values(explainer, applicant_df)[0]
     shap_df = pd.DataFrame({
         "Feature": feature_cols,
         "Value": applicant_df.iloc[0].values,
@@ -181,15 +235,41 @@ def run_application(input_dict, artifacts, llm_mode: str | None = None):
     }).sort_values("SHAP", ascending=False)
     result["shap_explanation"] = shap_df
 
-    n_cf = cfg.get("dice", {}).get("n_counterfactuals", 3)
-    feature_ranges = get_feature_ranges(X_train, applicant_df.iloc[0])
-    cf_result = generate_counterfactuals(
-        dice_exp, applicant_df, feature_ranges, n=n_cf
-    )
-    _, suggestion_text = format_counterfactuals(cf_result, applicant_df.iloc[0])
+    if dice_exp is None or X_train is None:
+        suggestion_text = _simple_recourse(applicant_df.iloc[0])
+        cf_features = ["loan_amnt", "person_income", "loan_percent_income"]
+    else:
+        from counterfactuals import (
+            format_counterfactuals,
+            generate_counterfactuals,
+            get_feature_ranges,
+        )
+
+        n_cf = cfg.get("dice", {}).get("n_counterfactuals", 3)
+        feature_ranges = get_feature_ranges(X_train, applicant_df.iloc[0])
+        cf_result = generate_counterfactuals(
+            dice_exp, applicant_df, feature_ranges, n=n_cf
+        )
+        _, suggestion_text = format_counterfactuals(cf_result, applicant_df.iloc[0])
+        cf_features = list(feature_ranges.keys()) if suggestion_text else []
     result["counterfactuals"] = suggestion_text
 
-    cf_features = list(feature_ranges.keys()) if suggestion_text else []
+    from evaluation.faithfulness import score_faithfulness
+    from evaluation.template_explainer import applicant_local_explanation
+
+    # Serverless: never import SHAP or Gemini (those packages are not installed).
+    if artifacts.get("lite") or explainer is None:
+        result["explanation"] = applicant_local_explanation(shap_df, suggestion_text)
+        result["explanation_source"] = "template"
+        result["faithfulness"] = score_faithfulness(
+            result["explanation"], shap_df, cf_features=cf_features
+        )
+        return result
+
+    from explainer import (
+        build_explanation_prompt,
+        build_grounded_explanation_prompt,
+    )
 
     if mode == "grounded":
         prompt = build_grounded_explanation_prompt(
@@ -206,6 +286,8 @@ def run_application(input_dict, artifacts, llm_mode: str | None = None):
     result["llm_prompt"] = prompt
 
     if mode != "off":
+        from llm import generate_explanation
+
         try:
             result["explanation"] = generate_explanation(
                 prompt,

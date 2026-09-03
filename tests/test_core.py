@@ -38,6 +38,27 @@ FEATURE_COLS = [
 ]
 
 
+def test_api_import_does_not_load_shap():
+    import importlib
+    import sys
+
+    sys.modules.pop("shap", None)
+    sys.modules.pop("pipeline", None)
+    import api as api_mod
+
+    importlib.reload(api_mod)
+    assert "shap" not in sys.modules
+    client = None
+    try:
+        from fastapi.testclient import TestClient
+
+        client = TestClient(api_mod.app)
+        assert client.get("/").status_code == 200
+        assert client.get("/health").json()["status"] == "ok"
+    finally:
+        pass
+
+
 def test_preprocess_one_hot_and_grade():
     df = preprocess_input(
         {
