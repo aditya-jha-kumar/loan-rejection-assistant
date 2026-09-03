@@ -3,8 +3,9 @@ app.py
 ------
 Streamlit UI for the Explainable Loan Rejection Assistant.
 
-Run from the project root:
-    streamlit run app.py
+streamlit run app.py
+
+The FastAPI app lives in api.py. Vercel uses api:app via pyproject.toml.
 """
 
 import os
@@ -416,3 +417,4 @@ st.caption(
     "Research prototype — XGBoost + SHAP + DiCE + grounded Gemini. "
     "Paper angle: SHAP-grounded faithful explanations & recourse quality metrics."
 )
+

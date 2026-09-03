@@ -63,6 +63,17 @@ python -m evaluation.run_experiments --max-samples 20 --with-llm
 
 Copy `.env.example` → `.env` and set `GEMINI_API_KEY` for natural-language explanations.
 
+## Vercel (FastAPI)
+
+Vercel looks for FastAPI in `app.py` by default; this repo’s UI is Streamlit. The API entrypoint is set in `pyproject.toml`:
+
+```toml
+[tool.vercel]
+entrypoint = "api:app"
+```
+
+Add `GEMINI_API_KEY` in the Vercel project environment if you want Gemini letters. The dataset (`data/loan_dataset.csv`) and model (`models/loan_model.pkl`) are gitignored — the function needs them at runtime or startup will fail.
+
 ## Project layout
 
 | Path | Role |

@@ -4,6 +4,7 @@ api.py
 FastAPI backend for the Explainable Loan Rejection Assistant.
 
 Run from project root:
+    uvicorn app:app --reload
     uvicorn api:app --reload --app-dir .
 or:
     python api.py

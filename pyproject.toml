@@ -1,0 +1,8 @@
+[project]
+name = "loan-rejection-assistant"
+version = "1.1.0"
+description = "Explainable loan rejection assistant (XGBoost + SHAP + DiCE + FastAPI)"
+requires-python = ">=3.11"
+
+[tool.vercel]
+entrypoint = "api:app"
