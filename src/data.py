@@ -17,6 +17,7 @@ def load_data(path):
 # DATA CLEANING
 
 def clean_data(df):
+    df = df.copy()
 
     # REMOVING IMPOSSIBLE AGE VALUES
     before = len(df)
@@ -24,7 +25,12 @@ def clean_data(df):
     print(f"Removed {before - len(df)} rows with impossible age values")
 
     # REMOVING IMPOSSIBLE EMPLOYMENT LENGTH
-    df = df[df["person_emp_length"] <= 60]
+    # Keep missing emp_length so it can be imputed; NaN <= 60 is False
+    # and would otherwise drop those rows instead of filling them.
+    emp = df["person_emp_length"]
+    before_emp = len(df)
+    df = df[emp.isna() | (emp <= 60)].copy()
+    print(f"Removed {before_emp - len(df)} rows with impossible employment length")
     print(f"Dataset after outlier removal: {df.shape[0]} rows")
 
     # HANDLING MISSING VALUES
@@ -55,6 +61,7 @@ def clean_data(df):
 # DATA ENCODING
 
 def encode_features(df):
+    df = df.copy()
 
     # loan_grade — Label Encoding encoding because A > B > C > D > E > F > G
     grade_map = {"A": 6, "B": 5, "C": 4, "D": 3, "E": 2, "F": 1, "G": 0}
@@ -86,8 +93,8 @@ def encode_features(df):
 # SPLIT FEATURES AND TARGET
 
 def split_features(df):
-    X = df.drop("loan_status", axis=1)
-    y = df["loan_status"]
+    X = df.drop("loan_status", axis=1).astype(float)
+    y = df["loan_status"].astype(int)
 
     print(f"\nFeatures (X): {X.shape}")
     print(f"Target   (y): {y.shape}")

@@ -70,6 +70,7 @@ def train_model(X_train, y_train):
         scale_pos_weight=3,        # handles 3.6:1 class imbalance
         random_state=42,           # reproducibility
         eval_metric="auc",         # optimize for AUC during training
+        enable_categorical=False,  # avoid SHAP TreeExplainer categorical-split errors
     )
 
     model.fit(X_train, y_train)

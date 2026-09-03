@@ -31,26 +31,32 @@ import pandas as pd
 
 class XGBWrapper:
     """
-    Wraps XGBoost model to force float64 dtype on all inputs.
+    Wraps XGBoost model to force float64 dtype and stable feature names.
 
     Why this is needed:
     DiCE internally modifies DataFrames during counterfactual
-    generation, sometimes producing object dtype columns.
-    XGBoost (newer versions) strictly requires numeric dtypes
-    and raises ValueError on object columns.
-
-    This wrapper intercepts every prediction call and casts
-    the input to float64 before passing to XGBoost.
+    generation, sometimes producing object dtype columns or numpy
+    arrays without names. XGBoost 3.x is strict about both dtypes
+    and training feature names.
     """
 
     def __init__(self, model):
         self.model = model
+        names = getattr(model, "feature_names_in_", None)
+        self.feature_names_ = list(names) if names is not None else []
+
+    def _frame(self, X):
+        df = pd.DataFrame(X)
+        if self.feature_names_ and df.shape[1] == len(self.feature_names_):
+            if list(df.columns) != self.feature_names_:
+                df.columns = self.feature_names_
+        return df.astype(float)
 
     def predict(self, X):
-        return self.model.predict(pd.DataFrame(X).astype(float))
+        return self.model.predict(self._frame(X))
 
     def predict_proba(self, X):
-        return self.model.predict_proba(pd.DataFrame(X).astype(float))
+        return self.model.predict_proba(self._frame(X))
 
 
 # BUILD DiCE EXPLAINER
@@ -188,13 +194,18 @@ def generate_counterfactuals(dice_exp, applicant_data,
         DiCE counterfactual result object
     """
     try:
+        query = applicant_data.copy()
+        if isinstance(query, pd.DataFrame):
+            query = query.astype(float)
         # Desired class 0 = good standing / approval for rejected applicants
         cf = dice_exp.generate_counterfactuals(
-            query_instances=applicant_data,
+            query_instances=query,
             total_CFs=n,
             desired_class=0,
             permitted_range=feature_ranges,
             features_to_vary=list(feature_ranges.keys()),
+            sample_size=2000,
+            random_seed=42,
         )
         return cf
     except Exception as e:

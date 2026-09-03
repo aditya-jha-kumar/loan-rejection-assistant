@@ -1,0 +1,44 @@
+# Explainable Loan Rejection Assistant — runtime config
+
+paths:
+  data: data/loan_dataset.csv
+  model: models/loan_model.pkl
+  calibrated_model: models/loan_model_calibrated.pkl
+  experiment_results: results/experiment_results.json
+  figures: models
+
+model:
+  n_estimators: 200
+  max_depth: 5
+  learning_rate: 0.1
+  scale_pos_weight: 3.0
+  random_state: 42
+  eval_metric: auc
+
+data:
+  test_size: 0.2
+  random_state: 42
+
+shap:
+  background_size: 100
+
+dice:
+  n_counterfactuals: 3
+  method: random
+
+fairness:
+  disparity_threshold: 0.10
+
+llm:
+  model: gemini-3.6-flash
+  # grounded = only cite SHAP/DiCE features (paper method)
+  mode: grounded
+
+evaluation:
+  # Max rejected applicants to score in batch experiments
+  max_samples: 100
+  random_state: 42
+
+api:
+  host: 0.0.0.0
+  port: 8000

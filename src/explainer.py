@@ -42,6 +42,13 @@ DEFAULT_IMPORTANCE_PATH = ROOT / "models" / "global_importance.png"
 
 # BUILD EXPLAINER
 
+def _as_numeric_frame(X):
+    """Coerce a feature matrix to a float DataFrame (stable for XGBoost/SHAP)."""
+    if isinstance(X, pd.DataFrame):
+        return X.astype(float)
+    return pd.DataFrame(X).astype(float)
+
+
 def build_explainer(model, X_train, background_size=100):
     """
     Create a SHAP TreeExplainer for the trained XGBoost model.
@@ -50,7 +57,10 @@ def build_explainer(model, X_train, background_size=100):
     - Optimized for tree-based models (XGBoost, RandomForest)
     - Exact SHAP values, not approximations
     - 100x faster than model-agnostic explainers (KernelExplainer)
-    - Uses a sample of training data as the baseline background
+
+    XGBoost 2.1+/3.x stores categorical metadata that SHAP's interventional
+    TreeSHAP (C extension) rejects. Prefer interventional when it works;
+    otherwise fall back to tree_path_dependent (XGBoost native pred_contribs).
 
     Args:
         model:               Trained XGBoost model
@@ -61,19 +71,41 @@ def build_explainer(model, X_train, background_size=100):
         shap.TreeExplainer
     """
     n = min(background_size, len(X_train))
-    background = shap.sample(X_train, n, random_state=42)
-    explainer = shap.TreeExplainer(model, background)
+    background = _as_numeric_frame(shap.sample(X_train, n, random_state=42))
+
+    explainer = None
+    mode = "interventional"
+    try:
+        candidate = shap.TreeExplainer(
+            model,
+            data=background,
+            feature_perturbation="interventional",
+        )
+        # Constructor can succeed while shap_values() still raises
+        _to_array(candidate.shap_values(background.iloc[:1]))
+        explainer = candidate
+    except (NotImplementedError, ValueError, TypeError):
+        mode = "tree_path_dependent"
+        explainer = shap.TreeExplainer(
+            model,
+            feature_perturbation="tree_path_dependent",
+        )
 
     expected = explainer.expected_value
-    if isinstance(expected, (list, np.ndarray)):
-        expected = float(np.asarray(expected).ravel()[-1])
+    if expected is None:
+        expected_str = "set on first explanation"
     else:
-        expected = float(expected)
+        if isinstance(expected, (list, np.ndarray)):
+            expected = float(np.asarray(expected).ravel()[-1])
+        else:
+            expected = float(expected)
+        expected_str = f"{expected:.4f}"
 
     print("Explainer created")
-    print(f"Baseline (expected value): {expected:.4f}")
+    print(f"SHAP mode: {mode}")
+    print(f"Baseline (expected value): {expected_str}")
     print("Interpretation: without seeing any features, the model's")
-    print(f"default prediction score is {expected:.4f}")
+    print(f"default prediction score is {expected_str}")
     return explainer
 
 
@@ -113,7 +145,15 @@ def get_shap_values(explainer, X):
         np.ndarray: SHAP values matrix
     """
     print(f"Computing SHAP values for {len(X)} applicants...")
-    shap_values = _to_array(explainer.shap_values(X))
+    X_num = _as_numeric_frame(X)
+    try:
+        raw = explainer.shap_values(X_num)
+    except NotImplementedError:
+        # Last-resort: callable API / path-dependent explainer
+        raw = explainer(X_num)
+    shap_values = _to_array(raw)
+    if shap_values.ndim == 1:
+        shap_values = shap_values.reshape(1, -1)
     print(f"SHAP values shape: {shap_values.shape}")
     return shap_values
 
@@ -301,6 +341,42 @@ Keep the tone professional but human. The applicant is a real person
 who needs clear guidance, not a data point.
 """
     return prompt
+
+
+def build_grounded_explanation_prompt(applicant_data, shap_df,
+                                      suggestion_text: str | None = None,
+                                      top_k: int = 5):
+    """
+    Grounded prompting (paper method): the LLM may only cite features
+    that appear in top SHAP risks or DiCE suggestions.
+
+    This is designed to reduce unsupported feature mentions
+    (hallucinations) while preserving coverage of true drivers.
+    """
+    base = build_explanation_prompt(applicant_data, shap_df)
+    top_risks = (
+        shap_df[shap_df["SHAP"] > 0]
+        .sort_values("SHAP", ascending=False)
+        .head(top_k)["Feature"]
+        .tolist()
+    )
+    allowed = ", ".join(top_risks) if top_risks else "(none)"
+
+    grounded_rules = f"""
+GROUNDING CONSTRAINTS (mandatory):
+- You may ONLY discuss these risk factors: {allowed}
+- If actionable changes are provided below, you may also discuss those changes
+- Do NOT invent other reasons (credit score agency reports, debt-to-income
+  from external bureaus, marital status, gender, race, or unlisted features)
+- If a factor is not listed above, do not mention it
+"""
+    if suggestion_text:
+        grounded_rules += (
+            f"\nACTIONABLE CHANGES SUGGESTED BY THE MODEL:\n"
+            f"{suggestion_text}\n"
+            f"Incorporate these where realistic.\n"
+        )
+    return base + "\n" + grounded_rules
 
 
 # QUICK TEST

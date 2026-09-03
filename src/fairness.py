@@ -161,6 +161,7 @@ def audit_age_fairness(X_test, y_test, predictions):
     })
 
     rows = []
+    numeric_rates = []
     for label in ["Young (20-30)", "Middle (31-50)", "Senior (51+)"]:
         group = base_df[base_df["age_group"] == label]
 
@@ -172,22 +173,27 @@ def audit_age_fairness(X_test, y_test, predictions):
         recall        = (good["predicted"] == 0).mean() if len(good) > 0 else None
         approved      = group[group["predicted"] == 0]
         precision     = (approved["actual"] == 0).mean() if len(approved) > 0 else None
+        numeric_rates.append(float(approval_rate))
 
         rows.append({
             "Age Group":     label,
             "Count":         len(group),
             "Approval Rate": f"{approval_rate:.1%}",
-            "Recall":        f"{recall:.1%}" if recall else "N/A",
-            "Precision":     f"{precision:.1%}" if precision else "N/A"
+            "Approval Rate Raw": float(approval_rate),
+            "Recall":        f"{recall:.1%}" if recall is not None else "N/A",
+            "Recall Raw":    float(recall) if recall is not None else None,
+            "Precision":     f"{precision:.1%}" if precision is not None else "N/A",
+            "Precision Raw": float(precision) if precision is not None else None,
         })
 
     results = pd.DataFrame(rows)
-    print(results.to_string(index=False))
+    print(results.drop(
+        columns=[c for c in results.columns if c.endswith("Raw")],
+        errors="ignore",
+    ).to_string(index=False))
 
     # Calculate and flag disparity
-    rates = [float(r.strip('%'))/100
-             for r in results["Approval Rate"]]
-    disparity = max(rates) - min(rates)
+    disparity = (max(numeric_rates) - min(numeric_rates)) if numeric_rates else 0.0
     flag      = "[CONCERN]" if disparity > 0.10 else "[FAIR]"
 
     print(f"\nApproval rate disparity: {disparity:.1%} {flag}")
@@ -243,7 +249,7 @@ def audit_intent_fairness(X_test, y_test, predictions):
             "Loan Intent":   intent_name,
             "Count":         len(group),
             "Approval Rate": f"{approval_rate:.1%}",
-            "Recall":        f"{recall:.1%}" if recall else "N/A"
+            "Recall":        f"{recall:.1%}" if recall is not None else "N/A"
         })
 
     results = pd.DataFrame(rows).sort_values(
@@ -301,10 +307,31 @@ def run_full_audit(X_test, y_test, predictions):
     print("80% rule used in US employment discrimination law,")
     print("adapted for credit decision contexts.")
 
+    passed = age_disparity < 0.10
     return {
         "age_results":    age_results,
-        "age_disparity":  age_disparity,
-        "intent_results": intent_results
+        "age_disparity":  float(age_disparity),
+        "intent_results": intent_results,
+        "passed":         passed,
+        "threshold":      0.10,
+        "note": (
+            f"Age approval-rate disparity {age_disparity:.1%} "
+            f"({'PASS' if passed else 'REVIEW'} vs 10% threshold)"
+        ),
+        "gender_note": (
+            "Gender data not available in this dataset — "
+            "noted as a limitation for ECOA-complete auditing."
+        ),
+        "groups": (
+            age_results[["Age Group", "Count", "Approval Rate Raw", "Recall Raw"]]
+            .rename(columns={
+                "Approval Rate Raw": "approval_rate",
+                "Recall Raw": "recall",
+            })
+            .to_dict(orient="records")
+            if len(age_results) and "Approval Rate Raw" in age_results.columns
+            else []
+        ),
     }
 
 

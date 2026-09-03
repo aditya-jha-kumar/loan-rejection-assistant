@@ -6,7 +6,10 @@ __pycache__/
 
 # Data — don't push large datasets to GitHub
 data/
-models/
+models/*.pkl
+
+# Experiment outputs can be regenerated
+results/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
@@ -18,3 +21,8 @@ venv/
 # API keys
 .env
 secrets.py
+
+# Pytest / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
