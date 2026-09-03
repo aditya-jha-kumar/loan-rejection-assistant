@@ -72,7 +72,7 @@ Vercel looks for FastAPI in `app.py` by default; this repo’s UI is Streamlit. 
 entrypoint = "api:app"
 ```
 
-Add `GEMINI_API_KEY` in the Vercel project environment if you want Gemini letters. The API lazy-loads the model on `/predict`; `/` and `/health` stay up even before that.
+Runtime dependencies for the Vercel function are listed in `pyproject.toml` (`[project] dependencies`). Redeploy after changing that list — an empty list is why the function previously started without FastAPI.
 
 ## Project layout
 

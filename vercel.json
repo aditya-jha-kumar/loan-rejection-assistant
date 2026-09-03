@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "pip install fastapi 'uvicorn[standard]' pydantic pandas numpy scikit-learn xgboost joblib pyyaml python-dotenv",
   "functions": {
     "api.py": {
       "maxDuration": 60

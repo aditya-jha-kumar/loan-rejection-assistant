@@ -3,6 +3,18 @@ name = "loan-rejection-assistant"
 version = "1.1.0"
 description = "Explainable loan rejection assistant (XGBoost + SHAP + DiCE + FastAPI)"
 requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110,<1",
+    "uvicorn[standard]>=0.27,<1",
+    "pydantic>=2.0,<3",
+    "pandas>=2.0,<3",
+    "numpy>=1.24,<3",
+    "scikit-learn>=1.3,<2",
+    "xgboost>=2.0,<4",
+    "joblib>=1.3,<2",
+    "PyYAML>=6.0,<7",
+    "python-dotenv>=1.0,<2",
+]
 
 [tool.vercel]
 entrypoint = "api:app"
